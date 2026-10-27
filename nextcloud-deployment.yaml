@@ -1,0 +1,192 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nextcloud
+  namespace: nextcloud
+  labels:
+    app.kubernetes.io/name: nextcloud
+    app.kubernetes.io/instance: nextcloud
+    app.kubernetes.io/component: app
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nextcloud
+      app.kubernetes.io/instance: nextcloud
+      app.kubernetes.io/component: app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nextcloud
+        app.kubernetes.io/instance: nextcloud
+        app.kubernetes.io/component: app
+      annotations:
+        nextcloud-config-hash: 2c620d6eac4314c9a69fdfb299af32077aa552fd06db46dbb6c56d93803f75f6
+        php-config-hash: 44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a
+        hooks-hash: 44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a
+    spec:
+      containers:
+        - name: nextcloud
+          image: docker.io/library/nextcloud:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_HOST
+              value: "postgres.postgres.svc.calfolguera.com"
+            - name: POSTGRES_DB
+              value: "nextcloud"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-postgres-secret
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-postgres-secret
+                  key: password
+            - name: DATABASE_URL
+              value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST)/$(POSTGRES_DB)"
+            - name: REDIS_HOST
+              value: "redis.redis.svc.calfolguera.com"
+            - name: REDIS_HOST_PORT
+              value: "6379"
+            - name: REDIS_URL
+              value: "redis://:$(REDIS_HOST_PASSWORD)@$(REDIS_HOST):$(REDIS_HOST_PORT)"
+            - name: NEXTCLOUD_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-secret
+                  key: nextcloud-username
+            - name: NEXTCLOUD_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-secret
+                  key: nextcloud-password
+            - name: NEXTCLOUD_TRUSTED_DOMAINS
+              value: nextcloud.calfolguera.freemyip.com nextcloud.nextcloud.svc.calfolguera.com
+            - name: OPENMETRICS_ALLOWED_CLIENTS
+              value: "127.0.0.1,10.42.0.0/16,10.43.0.0/16"
+            - name: NEXTCLOUD_DATA_DIR
+              value: "/var/www/html/data"
+
+          resources:
+            {}
+          volumeMounts:
+            - name: nextcloud-main
+              mountPath: /var/www/
+              subPath: root
+            - name: nextcloud-main
+              mountPath: /var/www/html
+              subPath: html
+            - name: nextcloud-main
+              mountPath: /var/www/html/data
+              subPath: data
+            - name: nextcloud-main
+              mountPath: /var/www/html/config
+              subPath: config
+            - name: nextcloud-main
+              mountPath: /var/www/html/custom_apps
+              subPath: custom_apps
+            - name: nextcloud-main
+              mountPath: /var/www/tmp
+              subPath: tmp
+            - name: nextcloud-main
+              mountPath: /var/www/html/themes
+              subPath: themes
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+#          livenessProbe:
+#            httpGet:
+#              path: /status.php
+#              port:  80
+#              httpHeaders:
+#              - name: Host
+#                value: "nextcloud.calfolguera.freemyip.com"
+#            initialDelaySeconds: 10
+#            periodSeconds: 10
+#            timeoutSeconds: 5
+#            successThreshold: 1
+#            failureThreshold: 3
+#          readinessProbe:
+#            httpGet:
+#              path: /status.php
+#              port:  80
+#              httpHeaders:
+#              - name: Host
+#                value: "nextcloud.calfolguera.freemyip.com"
+#            initialDelaySeconds: 10
+#            periodSeconds: 10
+#            timeoutSeconds: 5
+#            successThreshold: 1
+#            failureThreshold: 3
+      volumes:
+        - name: nextcloud-main
+          persistentVolumeClaim:
+            claimName: nextcloud-pvc
+      securityContext:
+        # Will mount configuration files as www-data (id: 33) for nextcloud
+        fsGroup: 33
+      dnsConfig:
+        options: []
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nextcloud-metrics
+  namespace: nextcloud
+  labels:
+    app.kubernetes.io/name: nextcloud
+    app.kubernetes.io/instance: nextcloud
+    app.kubernetes.io/component: metrics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nextcloud
+      app.kubernetes.io/instance: nextcloud
+      app.kubernetes.io/component: metrics
+  template:
+    metadata:
+      annotations:
+        {}
+      labels:
+        app.kubernetes.io/name: nextcloud
+        app.kubernetes.io/instance: nextcloud
+        app.kubernetes.io/component: metrics
+    spec:
+      containers:
+        - name: metrics-exporter
+          image: "docker.io/xperimental/nextcloud-exporter:0.9.1"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: NEXTCLOUD_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-secret
+                  key: nextcloud-username
+            - name: NEXTCLOUD_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-secret
+                  key: nextcloud-password
+            # NEXTCLOUD_SERVER is used by metrics-exporter to reach the Nextcloud (K8s-)Service to grab the serverinfo api endpoint
+            - name: NEXTCLOUD_SERVER # deployment.namespace.svc.cluster.local
+              value: "http://nextcloud.nextcloud.svc.calfolguera.com:8080"
+            - name: NEXTCLOUD_TIMEOUT
+              value: 5s
+            - name: NEXTCLOUD_TLS_SKIP_VERIFY
+              value: "false"
+            - name: NEXTCLOUD_INFO_APPS
+              value: "false"
+            - name: NEXTCLOUD_INFO_UPDATE
+              value: "false"
+          ports:
+            - name: metrics
+              containerPort: 9205
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
